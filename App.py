@@ -2,10 +2,11 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from prophet import Prophet
 
 st.set_page_config(layout="wide")
-st.title("🔥 BIST PRO MAX v4")
+st.title("🔥 BIST PRO MAX v5")
 
 symbol = st.text_input("Hisse Kodu (Örn: FROTO, THYAO, SASA)")
 
@@ -13,11 +14,10 @@ if symbol:
     ticker = yf.Ticker(symbol.upper() + ".IS")
     bist = yf.Ticker("XU100.IS")
 
-    data = ticker.history(period="2y")
-    bist_data = bist.history(period="2y")
+    data = ticker.history(period="2y", interval="1d")
+    bist_data = bist.history(period="2y", interval="1d")
 
     if not data.empty:
-
         close = data["Close"]
         volume = data["Volume"]
 
@@ -39,83 +39,50 @@ if symbol:
         macd = ema12 - ema26
         signal = macd.ewm(span=9).mean()
 
-        # Bollinger
+        # Bollinger Bands
         std = close.rolling(20).std()
         upper = ma20 + 2*std
         lower = ma20 - 2*std
 
         # Trend
-        if ma50.iloc[-1] > ma200.iloc[-1]:
-            trend = "YUKARI"
-        else:
-            trend = "AŞAĞI"
+        trend = "YUKARI" if ma50.iloc[-1] > ma200.iloc[-1] else "AŞAĞI"
 
-        st.subheader("📈 Fiyat & Bollinger")
-        fig, ax = plt.subplots(figsize=(10,5))
-        ax.plot(close)
-        ax.plot(ma50)
-        ax.plot(ma200)
-        ax.plot(upper, linestyle="dashed")
-        ax.plot(lower, linestyle="dashed")
-        st.pyplot(fig)
+        # Plotly ile interaktif grafik
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=data.index, y=close, mode='lines', name='Close'))
+        fig.add_trace(go.Scatter(x=data.index, y=ma50, mode='lines', name='MA50'))
+        fig.add_trace(go.Scatter(x=data.index, y=ma200, mode='lines', name='MA200'))
+        fig.add_trace(go.Scatter(x=data.index, y=upper, mode='lines', name='Upper BB', line=dict(dash='dash')))
+        fig.add_trace(go.Scatter(x=data.index, y=lower, mode='lines', name='Lower BB', line=dict(dash='dash')))
 
-        st.subheader("📊 MACD")
-        fig2, ax2 = plt.subplots(figsize=(10,4))
-        ax2.plot(macd)
-        ax2.plot(signal)
-        st.pyplot(fig2)
+        # Alım/Satım noktaları örneği (MACD)
+        buy_signals = (macd > signal) & (macd.shift(1) < signal.shift(1))
+        sell_signals = (macd < signal) & (macd.shift(1) > signal.shift(1))
 
+        fig.add_trace(go.Scatter(x=data.index[buy_signals], y=close[buy_signals],
+                                 mode='markers', name='AL', marker=dict(color='green', size=10)))
+        fig.add_trace(go.Scatter(x=data.index[sell_signals], y=close[sell_signals],
+                                 mode='markers', name='SAT', marker=dict(color='red', size=10)))
+
+        st.subheader("📈 Fiyat & Bollinger & Al/Sat")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # RSI
+        fig_rsi = go.Figure()
+        fig_rsi.add_trace(go.Scatter(x=data.index, y=rsi, name="RSI"))
+        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
         st.subheader("📊 RSI")
-        fig3, ax3 = plt.subplots(figsize=(10,4))
-        ax3.plot(rsi)
-        ax3.axhline(70)
-        ax3.axhline(30)
-        st.pyplot(fig3)
+        st.plotly_chart(fig_rsi, use_container_width=True)
 
-        # Performans karşılaştırma
-        perf_stock = (close.iloc[-1]/close.iloc[0]-1)*100
-        perf_bist = (bist_data["Close"].iloc[-1]/bist_data["Close"].iloc[0]-1)*100
-
-        st.subheader("📊 Endeks Karşılaştırma")
-        st.write("Hisse 2Y Getiri:", round(perf_stock,2), "%")
-        st.write("BIST100 2Y Getiri:", round(perf_bist,2), "%")
-
-        # Risk
-        volatility = close.pct_change().std()*np.sqrt(252)
-        st.write("Volatilite:", round(volatility*100,2), "%")
-
-        # Temel
-        info = ticker.info
-        price = close.iloc[-1]
-        eps = info.get("trailingEps", None)
-        book = info.get("bookValue", None)
-
-        score = 0
-
-        if eps:
-            fk = price/eps
-            st.write("F/K:", round(fk,2))
-            if fk < 15: score += 15
-
-        if book:
-            pddd = price/book
-            st.write("PD/DD:", round(pddd,2))
-            if pddd < 2: score += 15
-
-        if trend == "YUKARI": score += 20
-        if rsi.iloc[-1] < 30: score += 10
-        if macd.iloc[-1] > signal.iloc[-1]: score += 10
-
-        if perf_stock > perf_bist: score += 10
-
-        st.subheader("🧠 Genel Yatırım Skoru")
-        st.write("Skor:", score, "/100")
-
-        if score >= 70:
-            st.success("🟢 GÜÇLÜ AL")
-        elif score >= 50:
-            st.info("🟡 AL")
-        elif score >= 30:
-            st.warning("⚪ NÖTR")
-        else:
-            st.error("🔴 RİSKLİ")
+        # Tahmin (Prophet)
+        st.subheader("🔮 Gelecek Fiyat Tahmini (1 Ay)")
+        df_prophet = close.reset_index()[['Date', 'Close']].rename(columns={'Date':'ds','Close':'y'})
+        model = Prophet(daily_seasonality=True)
+        model.fit(df_prophet)
+        future = model.make_future_dataframe(periods=30)
+        forecast = model.predict(future)
+        fig_forecast = go.Figure()
+        fig_forecast.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Tahmin'))
+        fig_forecast.add_trace(go.Scatter(x=df_prophet['ds'], y=df_prophet['y'], mode='lines', name='Gerçek'))
+        st.plotly_chart(fig_forecast, use_container_width=True)
