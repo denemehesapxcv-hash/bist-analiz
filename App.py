@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 st.set_page_config(layout="wide")
-st.title("📊 BIST PRO ANALİZ (1-2 Kuralı Sistemi)")
+st.title("📊 BIST PRO ANALİZ (1-2 Kuralı + Yatırımcı Dağılımı)")
 
 symbol = st.text_input("Hisse Kodu (Örn: THYAO, FROTO, SASA)")
 
@@ -46,7 +46,6 @@ if symbol:
 
             st.subheader("📌 1-2 Kuralı Teknik Sonuç")
 
-            # ===== 1-2 Kuralı =====
             if (latest_rsi > 50) and (latest_macd > latest_signal) and (latest_price > latest_ema):
                 st.success("🔥 GÜÇLÜ AL SİNYALİ")
             elif (latest_rsi < 50) and (latest_macd < latest_signal) and (latest_price < latest_ema):
@@ -54,29 +53,53 @@ if symbol:
             else:
                 st.warning("⚖️ KARARSIZ / BEKLE")
 
-            # ===== Fiyat Grafiği =====
+            # ===== FİYAT GRAFİĞİ =====
             st.subheader("📈 Fiyat + EMA50")
-
             fig1, ax1 = plt.subplots()
-            ax1.plot(data.index, close)
-            ax1.plot(data.index, data["EMA50"])
+            ax1.plot(data.index, close, label="Fiyat")
+            ax1.plot(data.index, data["EMA50"], label="EMA50 (Trend)")
+            ax1.legend()
             st.pyplot(fig1)
 
             # ===== RSI =====
-            st.subheader("📊 RSI")
+            st.subheader("📊 RSI Göstergesi")
             fig2, ax2 = plt.subplots()
-            ax2.plot(data.index, data["RSI"])
-            ax2.axhline(50)
-            ax2.axhline(70)
-            ax2.axhline(30)
+            ax2.plot(data.index, data["RSI"], label="RSI Çizgisi")
+            ax2.axhline(70, linestyle="--", label="70 = Aşırı Alım")
+            ax2.axhline(30, linestyle="--", label="30 = Aşırı Satım")
+            ax2.axhline(50, linestyle="--", label="50 = Trend Dengesi")
+            ax2.legend()
             st.pyplot(fig2)
 
             # ===== MACD =====
-            st.subheader("📊 MACD")
+            st.subheader("📊 MACD Göstergesi")
             fig3, ax3 = plt.subplots()
-            ax3.plot(data.index, data["MACD"])
-            ax3.plot(data.index, data["Signal"])
+            ax3.plot(data.index, data["MACD"], label="MACD Çizgisi")
+            ax3.plot(data.index, data["Signal"], label="Signal Çizgisi")
+            ax3.legend()
             st.pyplot(fig3)
+
+            st.write("MACD Çizgisi Signal üstüne çıkarsa → AL")
+            st.write("MACD Çizgisi Signal altına inerse → SAT")
+
+            # ===== YATIRIMCI DAĞILIMI =====
+            st.subheader("🥧 Yatırımcı Dağılımı")
+
+            info = ticker.info
+
+            institutions = info.get("heldPercentInstitutions", 0) or 0
+            insiders = info.get("heldPercentInsiders", 0) or 0
+            others = 1 - (institutions + insiders)
+
+            if others < 0:
+                others = 0
+
+            labels = ["Kurumsal", "İçeriden Sahiplik", "Diğer (Bireysel/Fon)"]
+            sizes = [institutions * 100, insiders * 100, others * 100]
+
+            fig4, ax4 = plt.subplots()
+            ax4.pie(sizes, labels=labels, autopct='%1.1f%%')
+            st.pyplot(fig4)
 
     except Exception as e:
         st.error("Hata: " + str(e))
